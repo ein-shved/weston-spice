@@ -4,7 +4,7 @@ project (weston-spice)
 # The version number.
 set (WESRON_SPICE_VERSION_MAJOR 0)
 set (WESTON_SPICE_VERSION_MINOR 0)
-set (DEBUG 1)
+set (DEBUG 2)
 
 set (PROJECTS_DIR "/home/shved/Projects")
 set (SPICE_DIR "${PROJECTS_DIR}/Spice")
@@ -44,6 +44,8 @@ add_library ( compositor-spice MODULE
               "${PROJECT_SOURCE_DIR}/shared/option-parser.c"
               "${PROJECT_SOURCE_DIR}/weston_basic_event_loop.c"
               "${PROJECT_SOURCE_DIR}/weston_qxl_interface.c"
+              "${PROJECT_SOURCE_DIR}/weston_qxl_commands.c"
+              "${PROJECT_SOURCE_DIR}/weston_input_interfaces.c"
             )
 add_custom_command ( TARGET compositor-spice
                      POST_BUILD

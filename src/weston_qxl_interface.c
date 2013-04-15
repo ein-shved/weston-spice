@@ -5,10 +5,11 @@
 
 #include <spice/qxl_dev.h>
 #include <spice.h>
+#include <spice/macros.h>
+#include <weston/compositor.h>
 
 #include "compositor-spice.h"
-#include "common/ring.h"
-#include "weston_qxl_interface.h"
+#include "weston_spice_interfaces.h"
 
 //Not actually need.
 QXLDevMemSlot slot = {
@@ -44,11 +45,11 @@ static int push_command (spice_compositor_t *qxl, QXLCommandExt *cmd)
     int count;
 
     ASSERT_COMMANDS;
-    
+
     while ( (count  = commands.end - commands.start) >= MAX_COMMAND_NUM) {
         //may be decremented from worker thread.
         if (i >= MAX_WAIT_ITERATIONS) {
-            dprint (2, "command que is full");
+            dprint (1, "command que is full");
             return FALSE;
         }
         ++i;
@@ -70,7 +71,7 @@ static void weston_interface_attache_worker (QXLInstance *sin, QXLWorker *qxl_wo
     }
     qxl_worker->add_memslot(qxl_worker, &slot);
 
-    dprint(3, "called");
+    dprint(3, "called, worker: %d", qxl_worker);
     qxl->worker = qxl_worker;
 //    create_primary_surface(qxl, DEFAULT_WIDTH, DEFAULT_HEIGHT);
 }
@@ -112,7 +113,7 @@ static int weston_interface_get_command(QXLInstance *sin, struct QXLCommandExt *
     memset (ext,0,sizeof(*ext));
 
     dprint(3, "called");
-    
+
     if (count > 0) {
         *ext = *commands.vector[commands.start];
         ++commands.start;
@@ -133,8 +134,6 @@ static int weston_interface_req_cmd_notification(QXLInstance *sin)
 
     dprint(3, "called");
  
-    qxl->core->timer_start (qxl->wakeup_timer, 10);
-
     /* This and req_cursor_notification needed for
      * client showing
      */
@@ -144,24 +143,115 @@ static void weston_interface_release_resource(QXLInstance *sin,
                                        struct QXLReleaseInfoExt info)
 {
     spice_compositor_t *qxl = container_of(sin, spice_compositor_t, display_sin);
-    QXLCommandExt *ext;
+    struct spice_release_info *ri;
         
     dprint(3, "called");
  
     assert (info.group_id == MEMSLOT_GROUP);
-    ext = (QXLCommandExt*)(unsigned long)info.info->id;
+    ri = (struct spice_release_info*)(unsigned long)info.info->id;
 
-//    qxl->release_resource(qxl, ext);
+    ri->destructor(ri);
 }
+
+/*
+ * copy-paste from
+ * spice/server/tests/test_display_base.c
+ *
+ * from here
+ */
+
+#define CURSOR_WIDTH 32
+#define CURSOR_HEIGHT 32
+
+static struct {
+    QXLCursor cursor;
+    uint8_t data[CURSOR_WIDTH * CURSOR_HEIGHT * 4]; // 32bit per pixel
+} cursor;
+static void cursor_init()
+{
+    cursor.cursor.header.unique = 0;
+    cursor.cursor.header.type = SPICE_CURSOR_TYPE_COLOR32;
+    cursor.cursor.header.width = CURSOR_WIDTH;
+    cursor.cursor.header.height = CURSOR_HEIGHT;
+    cursor.cursor.header.hot_spot_x = 0;
+    cursor.cursor.header.hot_spot_y = 0;
+    cursor.cursor.data_size = CURSOR_WIDTH * CURSOR_HEIGHT * 4;
+
+    // X drivers addes it to the cursor size because it could be
+    // cursor data information or another cursor related stuffs.
+    // Otherwise, the code will break in client/cursor.cpp side,
+    // that expect the data_size plus cursor information.
+    // Blame cursor protocol for this. :-)
+    cursor.cursor.data_size += 128;
+    cursor.cursor.chunk.data_size = cursor.cursor.data_size;
+    cursor.cursor.chunk.prev_chunk = cursor.cursor.chunk.next_chunk = 0;
+}
+
+/*
+ * till here
+ */
+
+struct cursor_cmd {
+    struct spice_release_info base;
+
+    QXLCommandExt ext;
+    QXLCursorCmd cursor_cmd;
+};
+
 static int weston_interface_get_cursor_command(QXLInstance *sin, struct QXLCommandExt *ext)
 {
-    spice_compositor_t *qxl = container_of(sin, spice_compositor_t, display_sin);
-
-    dprint(3, "called");
- 
-    //FIXME implemet
+    spice_compositor_t *c = container_of(sin, spice_compositor_t, display_sin);
+    static int set = TRUE;
+    struct cursor_cmd *cmd;
+    static int x = 0, y = 0;
+    struct wl_pointer *pointer;
 
     return FALSE;
+    
+    if (!c->core_seat.has_pointer) {
+        return FALSE;
+    }
+    pointer = c->core_seat.seat.pointer;
+
+    if ( !set && 
+            x == pointer->x &&
+            y == pointer->y )
+    {
+        return FALSE;
+    }
+
+    dprint(2, "called");
+
+    x = pointer->x;
+    y = pointer->y;   
+
+    cmd = calloc (1, sizeof *cmd);
+    cmd->cursor_cmd.release_info.id = (unsigned long)cmd;
+    cmd->base.destructor = release_simple;
+
+    if (set) {
+        cursor_init();
+        cmd->cursor_cmd.type = QXL_CURSOR_SET;
+        cmd->cursor_cmd.u.set.position.x = 0;
+        cmd->cursor_cmd.u.set.position.y = 0;
+        cmd->cursor_cmd.u.set.visible = TRUE;
+        cmd->cursor_cmd.u.set.shape = (unsigned long)&cursor;
+        // only a white rect (32x32) as cursor
+        memset(cursor.data, 0xff, sizeof(cursor.data));
+        set = 0;
+    } else {
+        cmd->cursor_cmd.type = QXL_CURSOR_MOVE;
+        cmd->cursor_cmd.u.position.x = x;
+        cmd->cursor_cmd.u.position.y = y;
+    }
+    
+    cmd->ext.cmd.data = (unsigned long)&cmd->cursor_cmd;
+    cmd->ext.cmd.type = QXL_CMD_CURSOR;
+    cmd->ext.group_id = MEMSLOT_GROUP;
+    cmd->ext.flags    = 0;
+    *ext = cmd->ext;
+ 
+    return TRUE;
 }
 static int weston_interface_req_cursor_notification(QXLInstance *sin)
 {
