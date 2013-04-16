@@ -129,7 +129,7 @@ weston_kbd_push_scan_frag (SpiceKbdInstance *sin, uint8_t frag)
     enum wl_keyboard_key_state state;
 
     if (frag == 224) {
-        dprint (2, "escape called: %x", frag);
+        dprint (3, "escape called: %x", frag);
         weston_kbd.escape = frag;
         return;
     }
@@ -146,7 +146,7 @@ weston_kbd_push_scan_frag (SpiceKbdInstance *sin, uint8_t frag)
         frag += MIN_KEYCODE;
     }
 
-    dprint (2, "called: %x", frag);
+    dprint (3, "called: %x", frag);
 
     notify_key (&c->core_seat, weston_compositor_get_time(), frag,
                     state, STATE_UPDATE_AUTOMATIC );
